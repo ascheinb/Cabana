@@ -17,6 +17,7 @@
 #define CABANA_COMMUNICATIONPLAN_HPP
 
 #include <CabanaCore_config.hpp>
+#include <Cabana_Sort.hpp>
 
 #include <Kokkos_Core.hpp>
 #include <Kokkos_ScatterView.hpp>
@@ -671,7 +672,7 @@ class CommunicationPlan
 
     template <class ViewType>
     BinningData<device_type>
-    createFromExportsOnly_XGC( const ViewType& element_export_ranks )
+    createFromExportsOnlySorted( const ViewType& element_export_ranks )
     {
         // Store the number of export elements.
         _num_export_element = element_export_ranks.size();
@@ -684,14 +685,11 @@ class CommunicationPlan
         int my_rank = -1;
         MPI_Comm_rank( comm(), &my_rank );
 
-        // Pick an mpi tag for communication. This object has it's own
-        // communication space so any mpi tag will do.
-        const int mpi_tag = 1221;
-
         // Bin the elements based on input keys
-        const int num_bin = comm_size + 2; // Extra initial bin for particles remaining on rank
-                                           // Extra final bin for particles being removed
-        auto bin_data = Cabana::binByKey( keys, num_bin );
+        // Extra initial bin for particles remaining on rank
+        // Extra final bin for particles being removed
+        const int num_bin = comm_size + 2;
+        auto bin_data = Cabana::binByKey( element_export_ranks, num_bin );
 
         // Copy the bin counts to the host.
         auto bin_counts_host = Kokkos::create_mirror_view_and_copy(
@@ -699,15 +697,15 @@ class CommunicationPlan
 
         // Determine exports from bin counts.
         _num_export.assign( comm_size );
-        for(int i=0; i<comm_size; i++)
-            _num_export[i] = bin_counts_host(i+1);
+        for ( int i = 0; i < comm_size; i++ )
+            _num_export[i] = bin_counts_host( i + 1 );
 
         // Initialize imports
         _num_import.assign( comm_size );
 
         // Determine number of imports via all-to-all communication
-        MPI_Alltoall(_num_export.data(), 1, MPI_UNSIGNED_LONG,
-                     _num_import.data(), 1, MPI_UNSIGNED_LONG, comm);
+        MPI_Alltoall( _num_export.data(), 1, MPI_UNSIGNED_LONG,
+                      _num_import.data(), 1, MPI_UNSIGNED_LONG, comm() );
 
         // Compute the total number of exports.
         _total_num_export =
@@ -716,6 +714,8 @@ class CommunicationPlan
         // Compute the total number of imports.
         _total_num_import =
             std::accumulate( _num_import.begin(), _num_import.end(), 0 );
+
+        return bin_data;
     }
 
     /*!
